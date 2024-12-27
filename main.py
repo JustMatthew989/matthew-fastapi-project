@@ -1,27 +1,19 @@
-from typing import List, Optional
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel
+import string
+import random
+from typing import Optional
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, HttpUrl
 from sqlalchemy.orm import Session
-from database import SessionLocal, engine, Base
-from models import TodoItem as TodoItemModel
+from database import SessionLocal, Base, engine
+from models import URLItem
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-class TodoCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
-    completed: bool = False
-
-class TodoItem(BaseModel):
-    id: int
-    title: str
-    description: Optional[str] = None
-    completed: bool = False
-
-    class Config:
-        orm_mode = True
+class URLCreate(BaseModel):
+    url: HttpUrl
 
 def get_db():
     db = SessionLocal()
@@ -30,48 +22,38 @@ def get_db():
     finally:
         db.close()
 
-@app.get("/items", response_model=List[TodoItem])
-def get_items(db: Session = Depends(get_db)):
-    items = db.query(TodoItemModel).all()
-    return items
+def generate_short_id(length=6):
+    chars = string.ascii_letters + string.digits
+    return ''.join(random.choice(chars) for _ in range(length))
 
-@app.get("/items/{item_id}", response_model=TodoItem)
-def get_item(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(TodoItemModel).filter(TodoItemModel.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return item
+@app.post("/shorten")
+def shorten_url(item: URLCreate, db: Session = Depends(get_db)):
+    # Генерируем уникальный short_id
+    for _ in range(10):
+        short_id = generate_short_id()
+        existing = db.query(URLItem).filter(URLItem.short_id == short_id).first()
+        if not existing:
+            new_item = URLItem(short_id=short_id, full_url=str(item.url))
+            db.add(new_item)
+            db.commit()
+            db.refresh(new_item)
+            return {"short_url": f"http://localhost:8000/{short_id}"}
+    raise HTTPException(status_code=500, detail="Не удалось сгенерировать короткую ссылку")
 
-@app.post("/items", response_model=TodoItem)
-def create_item(item: TodoCreate, db: Session = Depends(get_db)):
-    new_item = TodoItemModel(
-        title=item.title,
-        description=item.description,
-        completed=item.completed
-    )
-    db.add(new_item)
-    db.commit()
-    db.refresh(new_item)
-    return new_item
+@app.get("/{short_id}")
+def redirect_to_full(short_id: str, db: Session = Depends(get_db)):
+    url_item = db.query(URLItem).filter(URLItem.short_id == short_id).first()
+    if not url_item:
+        raise HTTPException(status_code=404, detail="Короткая ссылка не найдена")
+    return RedirectResponse(url=url_item.full_url)
 
-@app.put("/items/{item_id}", response_model=TodoItem)
-def update_item(item_id: int, item: TodoCreate, db: Session = Depends(get_db)):
-    db_item = db.query(TodoItemModel).filter(TodoItemModel.id == item_id).first()
-    if not db_item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    db_item.title = item.title
-    db_item.description = item.description
-    db_item.completed = item.completed
-    db.commit()
-    db.refresh(db_item)
-    return db_item
-
-@app.delete("/items/{item_id}")
-def delete_item(item_id: int, db: Session = Depends(get_db)):
-    db_item = db.query(TodoItemModel).filter(TodoItemModel.id == item_id).first()
-    if not db_item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    db.delete(db_item)
-    db.commit()
-    return {"message": "Item deleted"}
+@app.get("/stats/{short_id}")
+def get_stats(short_id: str, db: Session = Depends(get_db)):
+    url_item = db.query(URLItem).filter(URLItem.short_id == short_id).first()
+    if not url_item:
+        raise HTTPException(status_code=404, detail="Короткая ссылка не найдена")
+    return {
+        "short_id": url_item.short_id,
+        "full_url": url_item.full_url
+    }
 

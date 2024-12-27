@@ -1,8 +1,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# Используем SQLite базу данных в директории /app/data
-SQLALCHEMY_DATABASE_URL = "sqlite:///./data/todo.db"
+# База данных в файле data/url.db
+SQLALCHEMY_DATABASE_URL = "sqlite:///./data/url.db"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
